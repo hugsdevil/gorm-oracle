@@ -3,7 +3,7 @@ package oracle
 import (
 	"reflect"
 
-	"github.com/sijms/go-ora/v2"
+	go_ora "github.com/sijms/go-ora/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
 	"gorm.io/gorm/clause"
@@ -49,10 +49,14 @@ func Create(db *gorm.DB) {
 			MergeCreate(db, onConflict, createValues)
 		} else {
 			stmt.AddClauseIfNotExists(clause.Insert{})
-			stmt.AddClause(clause.Values{Columns: createValues.Columns, Values: [][]interface{}{createValues.Values[0]}})
+			values := make([][]any, len(createValues.Values))
+			for i, value := range createValues.Values {
+				values[i] = append(values[i], value...)
+			}
+			stmt.AddClause(Values{Columns: createValues.Columns, Values: values})
 
 			stmt.Build("INSERT", "VALUES")
-			_ = outputInserted(db)
+			// _ = outputInserted(db)
 		}
 
 		if !db.DryRun && db.Error == nil {
@@ -68,21 +72,17 @@ func Create(db *gorm.DB) {
 					// TODO: get merged returning
 				}
 			} else {
-				for idx, values := range createValues.Values {
-					for i, val := range values {
+				for i, values := range createValues.Values {
+					for j, val := range values {
 						// HACK: replace values one by one, assuming its value layout will be the same all the time, i.e. aligned
-						stmt.Vars[i] = convertValue(val)
+						stmt.Vars[i*len(values)+j] = convertValue(val)
 					}
+				}
 
-					result, err := stmt.ConnPool.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
-					if db.AddError(err) == nil {
-						rowsAffected, _ := result.RowsAffected()
-						db.RowsAffected += rowsAffected
-
-						if stmtSchema != nil && len(stmtSchema.FieldsWithDefaultDBValue) > 0 {
-							getDefaultValues(db, idx)
-						}
-					}
+				result, err := stmt.ConnPool.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
+				if db.AddError(err) == nil {
+					rowsAffected, _ := result.RowsAffected()
+					db.RowsAffected = rowsAffected
 				}
 			}
 		}
